@@ -1,107 +1,206 @@
-import time
+#!/usr/bin/env python3
+"""
+Automated Memory Monitoring & JIRA Ticketing Daemon
+Author: AbdullahbinAmin
+Description: Production SRE daemon monitoring remote server memory via SSH,
+             automatically escalating memory pressure incidents to JIRA with high priority,
+             and dispatching managerial approval/notification emails via SMTP.
+"""
+
+import os
+import sys
+import logging
 import smtplib
-import paramiko
-from jira import JIRA
+import argparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+# Third-party imports with fallback check
+try:
+    import paramiko
+    from jira import JIRA
+except ImportError:
+    pass
 
-# Server and SSH credentials
-hostname = "YOUR SERVER IP ADDRESS"
-username = "YOUR USERNAME"
-password = "YOUR PASSWORD"
+# Configure structured logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("memory-monitor")
 
-# JIRA User credentials and API Key
-user = "YOUR JIRA ACCOUNT EMAIL"
-api_key = 'YOUR JIRA ACCOUNT API KEY'
 
-# JIRA Server URL
-server = "YOUR JIRA ATLASSIAN WEBSITE LINK"
-
-# Connect to JIRA
-jira = JIRA(server=server, basic_auth=(user, api_key))
-
-# SSH Client Setup
-client = paramiko.SSHClient()
-client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(hostname=hostname, username=username, password=password)
-
-# Command to check available memory
-cmd = "free -g"
-std_in, std_out, std_error = client.exec_command(cmd)
-
-# Output of the command
-cmdout = std_out.readlines()
-for i in cmdout:
-    print(i)
-
-# Extract available memory from the command output
-available_memory = cmdout[1].split()[6]
-
-# Check if the available memory is less than or equal to 1GB
-if int(available_memory) <= 1:
-    print(f"Alert: Available memory on server {hostname} is critically low ({available_memory}GB).")
-
-    # Prepare the issue details
-    Summary = f"Memory Available: {available_memory}GB"
-    Description = f"""Dear Team,
-
-    A memory shortage has been detected on the server {hostname}.
-    Available memory: {available_memory}GB.
-
-    This is a critical issue that requires your immediate attention.
-    Please review and take appropriate action to resolve the memory shortage.
-
-    Thank you,
-    Al-Nafi Support Team
-    """
-
-    # Issue details for creating the JIRA ticket
-    issue_dict = {
-        'project': {'key': 'IIP'},
-        'issuetype': {'name': 'Issue'},
-        'description': Description,
-        'summary': Summary,
-        'priority': {'name': 'Highest'},
-        'timetracking': {'originalEstimate': '1h'},
-        'assignee': {"accountId": "YOUR JIRA ACCOUNT ID"} # Specify stakeholder account ID
+def load_configuration():
+    """Load and validate environment configurations."""
+    config = {
+        "ssh_host": os.getenv("MONITOR_SSH_HOST", "127.0.0.1"),
+        "ssh_user": os.getenv("MONITOR_SSH_USER", "ubuntu"),
+        "ssh_password": os.getenv("MONITOR_SSH_PASSWORD", ""),
+        "ssh_key_path": os.getenv("MONITOR_SSH_KEY_PATH", ""),
+        "ssh_port": int(os.getenv("MONITOR_SSH_PORT", "22")),
+        "memory_threshold_gb": int(os.getenv("MEMORY_THRESHOLD_GB", "1")),
+        "jira_server": os.getenv("JIRA_SERVER_URL", "https://your-domain.atlassian.net"),
+        "jira_user": os.getenv("JIRA_USER_EMAIL", ""),
+        "jira_api_token": os.getenv("JIRA_API_TOKEN", ""),
+        "jira_project_key": os.getenv("JIRA_PROJECT_KEY", "OPS"),
+        "jira_assignee_id": os.getenv("JIRA_ASSIGNEE_ID", ""),
+        "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
+        "smtp_port": int(os.getenv("SMTP_PORT", "587")),
+        "smtp_user": os.getenv("SMTP_USER", ""),
+        "smtp_password": os.getenv("SMTP_PASSWORD", ""),
+        "alert_recipient": os.getenv("ALERT_RECIPIENT_EMAIL", "")
     }
+    return config
 
-    # Create the JIRA issue
+
+def check_remote_memory(config, dry_run=False, mock_available_gb=None):
+    """Connect to remote host via SSH and parse free memory."""
+    if dry_run or mock_available_gb is not None:
+        logger.info(f"[DRY-RUN] Simulating memory check. Mock available: {mock_available_gb or 0} GB")
+        return mock_available_gb if mock_available_gb is not None else 0
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    
+    try:
+        logger.info(f"Connecting to {config['ssh_host']}:{config['ssh_port']} as {config['ssh_user']}...")
+        if config["ssh_key_path"] and os.path.exists(config["ssh_key_path"]):
+            client.connect(
+                hostname=config["ssh_host"],
+                port=config["ssh_port"],
+                username=config["ssh_user"],
+                key_filename=config["ssh_key_path"],
+                timeout=10
+            )
+        else:
+            client.connect(
+                hostname=config["ssh_host"],
+                port=config["ssh_port"],
+                username=config["ssh_user"],
+                password=config["ssh_password"],
+                timeout=10
+            )
+
+        cmd = "free -g"
+        stdin, stdout, stderr = client.exec_command(cmd, timeout=10)
+        lines = stdout.readlines()
+        if len(lines) < 2:
+            raise RuntimeError(f"Unexpected output from 'free -g': {lines}")
+
+        # Typical output: Mem: total used free shared buff/cache available
+        parts = lines[1].split()
+        available_gb = int(parts[6])
+        logger.info(f"Server {config['ssh_host']} reports {available_gb} GB memory available.")
+        return available_gb
+    finally:
+        client.close()
+
+
+def create_jira_incident(config, available_gb, dry_run=False):
+    """Escalate memory exhaustion incident to JIRA."""
+    summary = f"CRITICAL: Memory Shortage on {config['ssh_host']} ({available_gb}GB Available)"
+    description = f"""Incident Notification:
+Server Host: {config['ssh_host']}
+Available Memory: {available_gb} GB
+Threshold: <= {config['memory_threshold_gb']} GB
+
+Action Required:
+Immediate inspection of memory-intensive processes required.
+
+Automated incident report generated by Memory Monitoring SRE Daemon.
+"""
+    if dry_run:
+        logger.info(f"[DRY-RUN] Would create JIRA ticket under project {config['jira_project_key']} with summary: '{summary}'")
+        return "DRYRUN-101"
+
+    jira = JIRA(
+        server=config["jira_server"],
+        basic_auth=(config["jira_user"], config["jira_api_token"])
+    )
+
+    issue_dict = {
+        'project': {'key': config['jira_project_key']},
+        'issuetype': {'name': 'Incident'},
+        'summary': summary,
+        'description': description,
+        'priority': {'name': 'Highest'}
+    }
+    if config["jira_assignee_id"]:
+        issue_dict['assignee'] = {'accountId': config['jira_assignee_id']}
+
     new_issue = jira.create_issue(fields=issue_dict)
-    print(f'Ticket created and assigned to the stakeholder. Issue ID: {new_issue.key}')
+    logger.info(f"JIRA Incident Ticket created successfully: {new_issue.key}")
+    return new_issue.key
 
-    # Send Email to Reporter for Manager Approval
-    email_subject = f"Approval Request for Ticket {new_issue.key}: {Summary}"
-    email_body = f"""
-        <p>Dear Reporter,</p>
-        <p>Thank you for writing to us.</p>
-        <p>We have received your JIRA ticket <strong>{new_issue.key}: {Summary}</strong> for a server access request.</p>
-        <p>Please provide the approval from your reporting head for proceeding further. Our team is looking into the issue and we will get back to you as quickly as possible.</p>
-        <p>In case of immediate assistance, please dial the Al-Nafi Direct lines for a quick response.</p>
-        <p>We look forward to interacting soon!</p>
-        <p>Best regards,<br>Al-Nafi Support Team</p>
-        """
 
-    # Fetch the reporter's email
-    reporter_email = new_issue.fields.reporter.emailAddress
+def send_email_notification(config, issue_key, available_gb, dry_run=False):
+    """Dispatch alert and managerial approval request via SMTP."""
+    recipient = config["alert_recipient"] or config["jira_user"]
+    if not recipient or not config["smtp_user"]:
+        logger.warning("SMTP configuration incomplete; skipping email alert.")
+        return
 
-    # Send the approval request email
-    my_mail = "YOUR EMAIL"
-    password = "YOUR EMAIL APP PASSWORD"
+    subject = f"🚨 URGENT: Memory Incident Escalated - {issue_key}"
+    body = f"""<html>
+<body>
+<h2>Server Memory Critical Incident Escalation</h2>
+<p><strong>Server Host:</strong> {config['ssh_host']}</p>
+<p><strong>Available Memory:</strong> {available_gb} GB</p>
+<p><strong>JIRA Reference:</strong> <a href="{config['jira_server']}/browse/{issue_key}">{issue_key}</a></p>
+<hr>
+<p>This automated escalation requires immediate triage or process optimization.</p>
+<p><em>SRE Monitoring & Automation Engine</em></p>
+</body>
+</html>"""
 
-    msg = MIMEMultipart()
-    msg['Subject'] = email_subject
-    msg['From'] = my_mail
-    msg['To'] = reporter_email
-    msg.attach(MIMEText(email_body, 'html'))
+    if dry_run:
+        logger.info(f"[DRY-RUN] Would dispatch alert email to {recipient} regarding {issue_key}")
+        return
 
-    # SMTP server setup
-    with smtplib.SMTP('smtp.gmail.com') as connection:
-        connection.starttls()  # Secure connection
-        connection.login(user=my_mail, password=password)
-        connection.send_message(msg)
-        print(f"Approval email sent to {reporter_email}")
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = config["smtp_user"]
+    msg["To"] = recipient
+    msg.attach(MIMEText(body, "html"))
 
-else:
-    print(f"Memory status on {hostname} is optimal. Available memory: {available_memory}GB.")
+    with smtplib.SMTP(config["smtp_server"], config["smtp_port"]) as server:
+        server.starttls()
+        server.login(config["smtp_user"], config["smtp_password"])
+        server.send_message(msg)
+        logger.info(f"Notification email dispatched to {recipient}")
+
+
+def run_monitor(dry_run=False, mock_available_gb=None):
+    """Main execution entrypoint."""
+    config = load_configuration()
+    logger.info(f"Starting memory monitor cycle (Threshold: <= {config['memory_threshold_gb']} GB)...")
+    
+    try:
+        available_gb = check_remote_memory(config, dry_run=dry_run, mock_available_gb=mock_available_gb)
+    except Exception as e:
+        logger.error(f"Failed to query remote server memory: {e}")
+        return 1
+
+    if available_gb <= config["memory_threshold_gb"]:
+        logger.warning(f"Memory threshold breached! Available: {available_gb} GB <= {config['memory_threshold_gb']} GB")
+        try:
+            issue_key = create_jira_incident(config, available_gb, dry_run=dry_run)
+            send_email_notification(config, issue_key, available_gb, dry_run=dry_run)
+        except Exception as e:
+            logger.error(f"Failed to execute escalation action: {e}")
+            return 1
+    else:
+        logger.info(f"Memory status optimal ({available_gb} GB available). No action required.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Automated SRE Memory Monitor & JIRA Escalation Daemon")
+    parser.add_argument("--dry-run", action="store_true", help="Execute without calling live JIRA/SSH/SMTP APIs")
+    parser.add_argument("--mock-memory-gb", type=int, help="Override detected memory with custom value for testing")
+    args = parser.parse_args()
+
+    exit_code = run_monitor(dry_run=args.dry_run, mock_available_gb=args.mock_memory_gb)
+    sys.exit(exit_code)

@@ -1,0 +1,21 @@
+# Environment & Credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pub
+id_rsa*
+
+# Python cache & virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.pytest_cache/
+
+# OS artifacts
+.DS_Store
+Thumbs.db

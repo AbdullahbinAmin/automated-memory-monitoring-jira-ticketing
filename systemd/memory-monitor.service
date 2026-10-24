@@ -1,0 +1,21 @@
+[Unit]
+Description=Automated Memory Monitoring & JIRA Escalation SRE Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=sre-daemon
+WorkingDirectory=/opt/memory-monitor
+EnvironmentFile=/opt/memory-monitor/.env
+ExecStart=/opt/memory-monitor/venv/bin/python /opt/memory-monitor/automated-memory-monitoring-jira-ticketing.py
+Restart=always
+RestartSec=60s
+
+# Hardening & Security
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

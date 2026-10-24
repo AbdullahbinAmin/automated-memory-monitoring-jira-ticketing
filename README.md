@@ -1,176 +1,147 @@
-User is working on a mini project related to automated memory monitoring and ticket creation, and plans to push it on GitHub.Here’s a refined version of the project, combining memory monitoring, JIRA ticket creation, and email notifications. I've also added real-life issue case details in the JIRA ticket creation section and integrated the email sending functionality into the process. This should be easy to follow for anyone looking to implement a similar solution. Here's the code:
-________________________________________
-# Automated Memory Monitoring and Ticket Creation with JIRA and Email Notification
-## Objective:
-This project automates the monitoring of server memory on a Linux machine and creates JIRA tickets when memory is low. It also sends an email to the reporter of the ticket, asking for manager approval before proceeding further.
-________________________________________
-## Project Structure:
-### 1.	Prerequisites:
-- Python 3.x
-- Libraries: paramiko, jira, smtplib, email.mime.multipart
-- JIRA API access: You need a JIRA API key and authentication details.
-- SSH access to the Linux server.
+# 🖥️ Automated Memory Monitoring & JIRA Incident Escalation Engine
 
-### 2.	Dependencies Installation: 
+[![CI Test Suite](https://github.com/AbdullahbinAmin/automated-memory-monitoring-jira-ticketing/actions/workflows/ci.yml/badge.svg)](https://github.com/AbdullahbinAmin/automated-memory-monitoring-jira-ticketing/actions)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![JIRA](https://img.shields.io/badge/Atlassian-JIRA_REST_API-0052CC?logo=jira&logoColor=white)
+![Paramiko](https://img.shields.io/badge/Paramiko-SSH2_Automation-blue)
+![Systemd](https://img.shields.io/badge/Linux-Systemd_Service-E95420?logo=ubuntu&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?logo=docker&logoColor=white)
+![SRE](https://img.shields.io/badge/SRE-Proactive_Monitoring-green)
 
-Run the following command to install required Python libraries:
+> **Enterprise Site Reliability Engineering (SRE) Daemon**  
+> *Proactively monitors Linux server memory pools over secure SSH, detects capacity threshold breaches, auto-creates high-priority Atlassian JIRA incidents, and dispatches managerial approval notifications via SMTP.*
 
-``` bash
-pip install paramiko jira
+---
+
+## 📖 Overview
+
+Memory exhaustion on critical Linux production nodes leads to kernel Out-Of-Memory (OOM) killer terminations, application crashes, and degraded user experiences.
+
+This **SRE Incident Automation Engine** continuously monitors available memory across infrastructure nodes. When available memory falls below defined Service Level Objectives (SLOs):
+1. **Automated Incident Creation**: Interacts with Atlassian JIRA Cloud/Server REST API to file a high-priority incident ticket under the designated operations project.
+2. **Approval & Alert Dispatch**: Sends structured HTML notification emails via SMTP to team leads and stakeholder inboxes requesting immediate triage.
+3. **Enterprise Hardening**: Runs as an isolated, non-root `systemd` daemon or containerized service with zero hardcoded credentials.
+
+---
+
+## 🏗️ Architecture & Escalation Flow
+
+```mermaid
+flowchart TD
+    Daemon["⚙️ SRE Monitoring Daemon\n(automated-memory-monitoring)"] -->|Paramiko SSH: 'free -g'| RemoteServer["🐧 Production Linux Node\n(Target Infrastructure)"]
+    
+    RemoteServer -->|Parse Available RAM (GB)| Daemon
+    
+    Daemon --> Decision{"Available Memory\n<= Threshold?"}
+    
+    Decision -->|Yes: Breach Detected| JIRA["🎫 Atlassian JIRA REST API\nCreate High-Priority Issue"]
+    Decision -->|No: Optimal State| Sleep["⏳ Log Optimal Status\nWait for Next Cycle"]
+    
+    JIRA --> Mail["📧 SMTP Mail Relay (TLS)\nDispatch Alert & Approval Request"]
+    Mail --> OnCall["👨‍💻 SRE On-Call & Managerial Review"]
 ```
 
-### 3.	GitHub Repository Setup: 
+---
 
-Create a new repository on GitHub and push the code there for easy access and version control.
-________________________________________
+## ⚡ Quick Start
 
-## Code Implementation:
+### 1. Prerequisites
+- **Python**: 3.10 or higher
+- **Network**: SSH network access to target Linux hosts (port 22)
+- **Atlassian JIRA**: Account email and API token
 
-``` python
-import time
-import smtplib
-import paramiko
-from jira import JIRA
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+### 2. Local Setup
+```bash
+# Clone the repository
+git clone https://github.com/AbdullahbinAmin/automated-memory-monitoring-jira-ticketing.git
+cd automated-memory-monitoring-jira-ticketing
 
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
 
-# Server and SSH credentials
-hostname = "YOUR SERVER IP ADDRESS"
-username = "YOUR USERNAME"
-password = "YOUR PASSWORD"
+# Install dependencies
+pip install -r requirements.txt
 
-# JIRA User credentials and API Key
-user = "YOUR JIRA ACCOUNT EMAIL"
-api_key = 'YOUR JIRA ACCOUNT API KEY'
-
-# JIRA Server URL
-server = "YOUR JIRA ATLASSIAN WEBSITE LINK"
-
-# Connect to JIRA
-jira = JIRA(server=server, basic_auth=(user, api_key))
-
-# SSH Client Setup
-client = paramiko.SSHClient()
-client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(hostname=hostname, username=username, password=password)
-
-# Command to check available memory
-cmd = "free -g"
-std_in, std_out, std_error = client.exec_command(cmd)
-
-# Output of the command
-cmdout = std_out.readlines()
-for i in cmdout:
-    print(i)
-
-# Extract available memory from the command output
-available_memory = cmdout[1].split()[6]
-
-# Check if the available memory is less than or equal to 1GB
-if int(available_memory) <= 1:
-    print(f"Alert: Available memory on server {hostname} is critically low ({available_memory}GB).")
-
-    # Prepare the issue details
-    Summary = f"Memory Available: {available_memory}GB"
-    Description = f"""Dear Team,
-
-    A memory shortage has been detected on the server {hostname}.
-    Available memory: {available_memory}GB.
-
-    This is a critical issue that requires your immediate attention.
-    Please review and take appropriate action to resolve the memory shortage.
-
-    Thank you,
-    Al-Nafi Support Team
-    """
-
-    # Issue details for creating the JIRA ticket
-    issue_dict = {
-        'project': {'key': 'IIP'},
-        'issuetype': {'name': 'Issue'},
-        'description': Description,
-        'summary': Summary,
-        'priority': {'name': 'Highest'},
-        'timetracking': {'originalEstimate': '1h'},
-        'assignee': {"accountId": "YOUR JIRA ACCOUNT ID"} # Specify stakeholder account ID
-    }
-
-    # Create the JIRA issue
-    new_issue = jira.create_issue(fields=issue_dict)
-    print(f'Ticket created and assigned to the stakeholder. Issue ID: {new_issue.key}')
-
-    # Send Email to Reporter for Manager Approval
-    email_subject = f"Approval Request for Ticket {new_issue.key}: {Summary}"
-    email_body = f"""
-        <p>Dear Reporter,</p>
-        <p>Thank you for writing to us.</p>
-        <p>We have received your JIRA ticket <strong>{new_issue.key}: {Summary}</strong> for a server access request.</p>
-        <p>Please provide the approval from your reporting head for proceeding further. Our team is looking into the issue and we will get back to you as quickly as possible.</p>
-        <p>In case of immediate assistance, please dial the Al-Nafi Direct lines for a quick response.</p>
-        <p>We look forward to interacting soon!</p>
-        <p>Best regards,<br>Al-Nafi Support Team</p>
-        """
-
-    # Fetch the reporter's email
-    reporter_email = new_issue.fields.reporter.emailAddress
-
-    # Send the approval request email
-    my_mail = "YOUR EMAIL"
-    password = "YOUR EMAIL APP PASSWORD"
-
-    msg = MIMEMultipart()
-    msg['Subject'] = email_subject
-    msg['From'] = my_mail
-    msg['To'] = reporter_email
-    msg.attach(MIMEText(email_body, 'html'))
-
-    # SMTP server setup
-    with smtplib.SMTP('smtp.gmail.com') as connection:
-        connection.starttls()  # Secure connection
-        connection.login(user=my_mail, password=password)
-        connection.send_message(msg)
-        print(f"Approval email sent to {reporter_email}")
-
-else:
-    print(f"Memory status on {hostname} is optimal. Available memory: {available_memory}GB.")
+# Copy and configure environment variables
+cp .env.example .env
 ```
 
-________________________________________
+### 3. Dry-Run Verification (No Live Credentials Required)
+You can test the entire evaluation and alerting logic in simulation mode:
 
-## Explanation of Code:
+```bash
+# Test optimal state (16 GB available - no incident created)
+python automated-memory-monitoring-jira-ticketing.py --dry-run --mock-memory-gb 16
 
-### 1.	SSH Connection to the Server:
-- The paramiko library is used to connect to a remote Linux server and execute the free -g command to check available memory.
+# Test critical breach state (0 GB available - triggers JIRA & Email simulation)
+python automated-memory-monitoring-jira-ticketing.py --dry-run --mock-memory-gb 0
+```
 
-### 2.	JIRA Integration:
-- The script uses the jira library to create a JIRA ticket when the available memory is below 1GB. The ticket includes a description of the issue and is assigned to the relevant stakeholder.
+### 4. Run Automated Test Suite
+```bash
+python -m unittest discover tests
+```
 
-### 3.	Email Notification:
-- When a ticket is created, an email is sent to the reporter requesting approval from their manager to proceed further with the ticket. The email includes the ticket details and instructions for the approval process.
+---
 
-### 4.	Real-Life Scenario for the Issue:
-- In the real-world scenario, when the server's memory falls below a critical threshold, it may affect the performance and stability of applications hosted on the server. A quick resolution is necessary to avoid downtime. The ticket created highlights this issue and ensures it is handled promptly.
-________________________________________
+## ⚙️ Configuration Reference
 
-## How to Run the Project:
+All settings are configured securely via environment variables (or `.env` file):
 
-### 1.	Install Dependencies: 
-Make sure to install the required libraries (paramiko, jira, smtplib).
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `MONITOR_SSH_HOST` | Target Linux host IP or FQDN | `127.0.0.1` |
+| `MONITOR_SSH_USER` | SSH username | `ubuntu` |
+| `MONITOR_SSH_PASSWORD` | SSH password (or use key path) | - |
+| `MONITOR_SSH_KEY_PATH` | Path to private SSH key (`.pem` / `id_rsa`) | - |
+| `MEMORY_THRESHOLD_GB` | Minimum acceptable available memory before alert | `1` |
+| `JIRA_SERVER_URL` | Base Atlassian JIRA instance URL | `https://your-domain.atlassian.net` |
+| `JIRA_USER_EMAIL` | JIRA user email | - |
+| `JIRA_API_TOKEN` | JIRA REST API access token | - |
+| `JIRA_PROJECT_KEY` | Target JIRA project key | `OPS` |
+| `SMTP_SERVER` | Outgoing SMTP mail server | `smtp.gmail.com` |
+| `SMTP_PORT` | SMTP port | `587` |
+| `SMTP_USER` | SMTP authentication user | - |
+| `ALERT_RECIPIENT_EMAIL`| SRE on-call / manager recipient email | - |
 
-### 2.	JIRA Setup:
-- Create a JIRA project if you don't already have one (in this case, IIP).
-- Generate an API key for authentication.
+---
 
-### 3.	Email Setup:
-Configure the email address and app-specific password for the email account used to send notifications.
+## 🚀 Production Deployment
 
-### 4.	Run the Script:
-Once everything is set up, you can run the Python script to monitor the server's memory. The script will check the available memory and create a JIRA ticket if necessary.
+### Option A: Linux Systemd Daemon
+A hardened `systemd` service unit is provided in [`systemd/memory-monitor.service`](./systemd/memory-monitor.service):
 
-### 5.	GitHub:
-Push the entire project to GitHub for version control and sharing.
-________________________________________
+```bash
+# 1. Install project files to /opt/memory-monitor
+sudo cp systemd/memory-monitor.service /etc/systemd/system/
 
-## Final Thoughts:
-This project demonstrates the power of automation in IT support. By integrating server monitoring, issue tracking (via JIRA), and email notifications, the script provides a streamlined process for addressing critical memory issues and ensures that the required stakeholders are notified promptly. It is highly customizable for different IT environments and can be adapted to handle other types of system monitoring.
+# 2. Reload daemon and start service
+sudo systemctl daemon-reload
+sudo systemctl enable --now memory-monitor.service
+
+# 3. Check logs
+journalctl -u memory-monitor.service -f
+```
+
+### Option B: Docker Container
+```bash
+# Build the container image
+docker build -t memory-monitor:latest .
+
+# Run container with environment configuration
+docker run -d --name memory-monitor --env-file .env memory-monitor:latest
+```
+
+---
+
+## 🧪 Testing & CI Pipeline
+
+Every push and pull request executes continuous integration tests under `.github/workflows/ci.yml`:
+- Validates Python syntax and PEP8 standards.
+- Executes automated unit tests with threshold breach assertions.
+
+---
+
+## 📄 License
+This project is licensed under the MIT License.
